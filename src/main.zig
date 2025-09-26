@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const expect = std.testing.expect;
+
 // Virtual Static Memory
 pub const Memory = struct {
     const Self = @This();
@@ -71,25 +73,169 @@ test "Memory" {
     mem.deinit();
 }
 
+pub const RegisterFile = struct {
+    const Self = @This();
+    allocator: std.mem.Allocator,
+    registers: []i32,
+
+    pub fn read(self: *Self, id: u8) i32 {
+        if (id > 31) return 0;
+        if (id == 0) return 0;
+        return self.registers[id - 1];
+    }
+    pub fn write(self: *Self, id: u8, value: i32) void {
+        if (id > 31) return;
+        if (id == 0) return;
+        self.registers[id - 1] = value;
+    }
+
+    pub fn init(allocator: std.mem.Allocator) !Self {
+        return Self{
+            .allocator = allocator,
+            .registers = try allocator.alloc(i32, 31),
+        };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.free(self.registers);
+    }
+};
+
+const Branch = enum(u8) {
+    NONE,
+    ONE,
+    ZERO,
+};
+const ControlSignals = struct {
+    result_src: u2 = 0b00,
+    mem_write: u1 = 0b0,
+    alu_control: u3 = 0b000,
+    alu_src: u1 = 0b0,
+    imm_src: u2 = 0b00,
+    reg_write: u1 = 0b0,
+    branch: u8 = 0b0,
+};
+
+pub const ControlUnit = struct {
+    const Self = @This();
+    allocator: std.mem.Allocator,
+    instruction_map: std.AutoHashMap(u32, ControlSignals),
+
+    fn parseInstructionSet(self: *Self, path: []const u8) !void {
+        const input_file = try std.fs.cwd().openFile(path, .{});
+        defer input_file.close();
+
+        const file_stat = try input_file.stat();
+        // defer self.allocator.destroy(file_stat);
+
+        const input = try input_file.readToEndAllocOptions(self.allocator, file_stat.size, null, @sizeOf(u8), 0);
+        std.debug.print("input size: {d}\ninput: {s}\n", .{ input.len, input });
+        defer self.allocator.free(input);
+
+        var status: std.zon.parse.Status = .{};
+        defer status.deinit(self.allocator);
+        const parsed = try std.zon.parse.fromSlice(struct { instructions: []struct {
+            op: u32,
+            control_signals: ControlSignals,
+        } }, self.allocator, input, &status, .{ .free_on_error = true });
+        defer self.allocator.free(parsed.instructions);
+        // const zon: struct { instructions: []struct {
+        //     op: u32,
+        //     control_signals: struct {
+        //         result_src: u2,
+        //         mem_write: u1,
+        //         alu_control: u3,
+        //         alu_src: u1,
+        //         imm_src: u2,
+        //         reg_write: u1,
+        //         branch: u8,
+        //     },
+        // } } = @import("instructions.zon");
+
+        for (parsed.instructions) |entry| {
+            std.debug.print("INSTRUCTION ENTRY 0b{0b:0>7}: {1any}\n", .{ entry.op, entry.control_signals });
+            try self.instruction_map.put(entry.op, entry.control_signals);
+        }
+    }
+
+    pub fn init(allocator: std.mem.Allocator) !*Self {
+        const self = try allocator.create(Self);
+        self.allocator = allocator;
+        self.instruction_map = std.AutoHashMap(u32, ControlSignals).init(allocator);
+        try parseInstructionSet(self, "src/instructions.zon");
+        return self;
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.instruction_map.deinit();
+        self.allocator.destroy(self);
+    }
+
+    pub fn decode(self: *Self, op: u32) !ControlSignals {
+        if (self.instruction_map.get(op)) |v| {
+            return v;
+        } else return error.IllegalInstruction;
+    }
+};
+
+pub const ALU = struct {
+    const Self = @This();
+    pub const ALU_MODE = enum(u8) {
+        ADD,
+        SUBTRACT,
+        AND,
+        OR,
+        SET_LESS_THAN,
+    };
+
+    mode: ALU_MODE = ALU_MODE.ADD,
+
+    pub fn setMode(self: *Self, mode: ALU_MODE) void {
+        self.mode = mode;
+    }
+
+    pub fn calculate(self: *Self, a: i32, b: i32) i32 {
+        switch (self.mode) {
+            ALU_MODE.ADD => {
+                return a + b;
+            },
+            ALU_MODE.SUBTRACT => {
+                return a - b;
+            },
+            ALU_MODE.AND => {
+                return a & b;
+            },
+            ALU_MODE.OR => {
+                return a | b;
+            },
+            ALU_MODE.SET_LESS_THAN => {
+                return @intFromBool(a < b);
+            },
+        }
+    }
+};
+
+test ALU {
+    var alu = ALU{};
+    alu.setMode(ALU.ALU_MODE.ADD);
+    try expect(alu.calculate(1, 3) == 4);
+    alu.setMode(ALU.ALU_MODE.SUBTRACT);
+    try expect(alu.calculate(4, 1) == 3);
+    alu.setMode(ALU.ALU_MODE.AND);
+    try expect(alu.calculate(3, 2) == 2);
+    alu.setMode(ALU.ALU_MODE.OR);
+    try expect(alu.calculate(4, 5) == 5);
+    alu.setMode(ALU.ALU_MODE.SET_LESS_THAN);
+    try expect(alu.calculate(3, 9) == 1);
+}
+
 pub const Model = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
     instruction_memory: *Memory,
     data_memory: *Memory,
-    register_file: struct {
-        registers: []i32,
-
-        pub fn read(self: *Self, id: u8) i32 {
-            if (id > 31) return 0;
-            if (id == 0) return 0;
-            return self.register_file.registers[id - 1];
-        }
-        pub fn write(self: *Self, id: u8, value: i32) void {
-            if (id > 31) return;
-            if (id == 0) return;
-            self.register_file.registers[id - 1] = value;
-        }
-    },
+    register_file: RegisterFile,
+    control_unit: *ControlUnit,
     pc: u32,
 
     pub fn init(allocator: std.mem.Allocator, mem_size: u32, instruction_memory: *Memory) !*Self {
@@ -97,7 +243,8 @@ pub const Model = struct {
         self.allocator = allocator;
         self.instruction_memory = instruction_memory;
         self.data_memory = try Memory.init(allocator, mem_size);
-        self.register_file.registers = try allocator.alloc(i32, 31);
+        self.register_file = try RegisterFile.init(allocator);
+        self.control_unit = try ControlUnit.init(allocator);
         self.pc = 0x0;
         return self;
     }
@@ -105,26 +252,34 @@ pub const Model = struct {
     pub fn deinit(self: *Self) void {
         self.instruction_memory.deinit();
         self.data_memory.deinit();
-        self.allocator.free(self.register_file.registers);
+        self.register_file.deinit();
+        self.control_unit.deinit();
         self.allocator.destroy(self);
     }
 
+    // fn replaceIllegalWithNOP(self: *Self, ) ControlSignals
+
     pub fn tick(self: *Self) !void {
-        const instr: [4]u8 = @bitCast(try self.instruction_memory.readWord(self.pc));
-        std.debug.print("Current Instruction: 0b{0b:0>8}", .{try self.instruction_memory.readWord(self.pc)});
-        const op: u8 = instr[3] & ~(1 << 7);
-        const funct3: u8 = (instr[2] >> 4) & ~(11111 << 3);
-        const funct7: u8 = instr[1] & ~(1);
-        const a1_temp: u16 = @bitCast(instr[2..3]);
-        const a1: u8 = @truncate((a1_temp >> 7) & ~(111 << 5));
-        // const a2 = instr[20..24];
-        // const a3 = instr[7..11];
-        _ = op;
+        const instr = try self.instruction_memory.readWord(self.pc);
+        std.debug.print("Current Instruction 0x{1x:0>8}: 0b{0b:0>32}\n", .{ try self.instruction_memory.readWord(self.pc), self.pc });
+        const op: u32 = instr & 0b1111111;
+        const funct3: u32 = (instr >> 12) & 0b111;
+        const funct7: u32 = (instr >> 25) & 0b1111111;
+        const a1: u32 = (instr >> 15) & 0b11111;
+        const a2: u32 = (instr >> 20) & 0b11111;
+        const a3: u32 = (instr >> 7) & 0b11111;
         _ = funct3;
         _ = funct7;
-        _ = a1;
-        // _ = a2;
-        // _ = a3;
+
+        const rs1 = self.register_file.read(@truncate(a2));
+        const rs2 = self.register_file.read(@truncate(a1));
+        const rd = self.register_file.read(@truncate(a3));
+        _ = rs1;
+        _ = rs2;
+        _ = rd;
+
+        const control_signals: ControlSignals = try self.control_unit.decode(op);
+        std.debug.print("Control Signals: {any}\n", .{control_signals});
         self.pc += 4;
     }
 };
@@ -135,12 +290,14 @@ test Model {
     const model = try Model.init(allocator, 1024, instruction_memory);
     defer model.deinit();
 
-    model.tick();
+    model.tick() catch |err| {
+        std.debug.print("UNEXPECTED ERROR OCCURED: {}\n", .{err});
+    };
 }
 
 pub fn main() void {
     std.debug.print("Hello Zig!\n", .{});
-    const allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const allocator = std.heap.ArenaAllocator.init(std.heap.page_allocator).allocator();
     const mem = try Memory.init(allocator, 1024);
-    mem.deinit();
+    defer mem.deinit();
 }

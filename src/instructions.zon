@@ -1,0 +1,30 @@
+.{
+    .instructions = .{
+        // nop
+        .{
+            .op = 0b0000000,
+            .control_signals = .{
+                .result_src = 0b00,
+                .mem_write = 0b0,
+                .alu_control = 0b000,
+                .alu_src = 0b0,
+                .imm_src = 0b00,
+                .reg_write = 0b0,
+                .branch = 0, // NONE
+            },
+        },
+        // addi
+        .{
+            .op = 0b0010011,
+            .control_signals = .{
+                .result_src = 0b00,
+                .mem_write = 0b0,
+                .alu_control = 0b000,
+                .alu_src = 0b1,
+                .imm_src = 0b00,
+                .reg_write = 0b1,
+                .branch = 0, // NONE
+            },
+        },
+    },
+}
