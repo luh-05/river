@@ -3,28 +3,37 @@
         // nop
         .{
             .op = 0b0000000,
-            .control_signals = .{
-                .result_src = 0b00,
-                .mem_write = 0b0,
-                .alu_control = 0b000,
-                .alu_src = 0b0,
-                .imm_src = 0b00,
-                .reg_write = 0b0,
-                .branch = 0, // NONE
-            },
+            .control_signals = .{ .result_src = 0b00, .mem_write = 0b0, .alu_op = 0b00, .alu_src = 0b0, .imm_src = 0b00, .reg_write = 0b0, .branch = 0b0, .jump = 0b0 },
         },
-        // addi
+        // lw
+        .{
+            .op = 0b0000011,
+            .control_signals = .{ .result_src = 0b01, .mem_write = 0b0, .alu_op = 0b00, .alu_src = 0b1, .imm_src = 0b00, .reg_write = 0b1, .branch = 0b0, .jump = 0b0 },
+        },
+        // sw
+        .{
+            .op = 0b0100011,
+            .control_signals = .{ .result_src = 0b00, .mem_write = 0b1, .alu_op = 0b00, .alu_src = 0b1, .imm_src = 0b01, .reg_write = 0b0, .branch = 0b0, .jump = 0b0 },
+        },
+        // R-Type
+        .{
+            .op = 0b0110011,
+            .control_signals = .{ .result_src = 0b00, .mem_write = 0b0, .alu_op = 0b10, .alu_src = 0b0, .imm_src = 0b00, .reg_write = 0b1, .branch = 0b0, .jump = 0b0 },
+        },
+        // beq
+        .{
+            .op = 0b1100011,
+            .control_signals = .{ .result_src = 0b00, .mem_write = 0b0, .alu_op = 0b01, .alu_src = 0b0, .imm_src = 0b10, .reg_write = 0b0, .branch = 0b1, .jump = 0b0 },
+        },
+        // I-Type ALU
         .{
             .op = 0b0010011,
-            .control_signals = .{
-                .result_src = 0b00,
-                .mem_write = 0b0,
-                .alu_control = 0b000,
-                .alu_src = 0b1,
-                .imm_src = 0b00,
-                .reg_write = 0b1,
-                .branch = 0, // NONE
-            },
+            .control_signals = .{ .result_src = 0b00, .mem_write = 0b0, .alu_op = 0b10, .alu_src = 0b1, .imm_src = 0b00, .reg_write = 0b1, .branch = 0b0, .jump = 0b0 },
+        },
+        // jal
+        .{
+            .op = 0b1101111,
+            .control_signals = .{ .result_src = 0b10, .mem_write = 0b0, .alu_op = 0b00, .alu_src = 0b0, .imm_src = 0b11, .reg_write = 0b1, .branch = 0b0, .jump = 0b1 },
         },
     },
 }

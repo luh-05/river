@@ -102,24 +102,34 @@ pub const RegisterFile = struct {
 };
 
 const Branch = enum(u8) {
-    NONE,
-    ONE,
-    ZERO,
+    NONE = 0b00,
+    ONE = 0b01,
+    ZERO = 0b10,
 };
 const ControlSignals = struct {
     result_src: u2 = 0b00,
     mem_write: u1 = 0b0,
-    alu_control: u3 = 0b000,
+    alu_op: u2 = 0b00,
     alu_src: u1 = 0b0,
     imm_src: u2 = 0b00,
     reg_write: u1 = 0b0,
     branch: u8 = 0b0,
+    jump: u1 = 0b0,
+};
+
+pub const ALU_CONTROL = enum(u8) {
+    ADD = 0b000,
+    SUBTRACT = 0b001,
+    AND = 0b010,
+    OR = 0b011,
+    SET_LESS_THAN = 0b101,
 };
 
 pub const ControlUnit = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
     instruction_map: std.AutoHashMap(u32, ControlSignals),
+    control_signals: ControlSignals,
 
     fn parseInstructionSet(self: *Self, path: []const u8) !void {
         const input_file = try std.fs.cwd().openFile(path, .{});
@@ -162,6 +172,7 @@ pub const ControlUnit = struct {
         const self = try allocator.create(Self);
         self.allocator = allocator;
         self.instruction_map = std.AutoHashMap(u32, ControlSignals).init(allocator);
+        self.control_signals = ControlSignals{};
         try parseInstructionSet(self, "src/instructions.zon");
         return self;
     }
@@ -171,62 +182,93 @@ pub const ControlUnit = struct {
         self.allocator.destroy(self);
     }
 
-    pub fn decode(self: *Self, op: u32) !ControlSignals {
+    pub fn decodeMain(self: *Self, op: u32) !ControlSignals {
         if (self.instruction_map.get(op)) |v| {
+            self.control_signals = v;
             return v;
         } else return error.IllegalInstruction;
+    }
+
+    // Decodes ALU, returns ADD for illegal codes
+    pub fn decodeALU(self: *Self, funct3: u32, funct7: u32) ALU_CONTROL {
+        switch (self.control_signals.alu_op) {
+            0b00 => return ALU_CONTROL.ADD,
+            0b01 => return ALU_CONTROL.SUBTRACT,
+            0b10 => {
+                switch (funct3) {
+                    0b000 => {
+                        switch (funct7) {
+                            0b00, 0b01, 0b10 => return ALU_CONTROL.ADD,
+                            0b11 => return ALU_CONTROL.SUBTRACT,
+                            else => return ALU_CONTROL.ADD,
+                            // else => return error.IllegalInstruction,
+                        }
+                    },
+                    0b010 => return ALU_CONTROL.SET_LESS_THAN,
+                    0b110 => return ALU_CONTROL.OR,
+                    0b111 => return ALU_CONTROL.AND,
+                    else => return ALU_CONTROL.ADD,
+                    // else => error.IllegalInstruction,
+                }
+            },
+            else => return ALU_CONTROL.ADD,
+            // 0b11 => return error.IllegalInstruction,
+        }
     }
 };
 
 pub const ALU = struct {
     const Self = @This();
-    pub const ALU_MODE = enum(u8) {
-        ADD,
-        SUBTRACT,
-        AND,
-        OR,
-        SET_LESS_THAN,
-    };
 
-    mode: ALU_MODE = ALU_MODE.ADD,
+    mode: ALU_CONTROL = ALU_CONTROL.ADD,
+    result: i32 = 0,
+    zero: bool = false,
 
-    pub fn setMode(self: *Self, mode: ALU_MODE) void {
+    pub fn setMode(self: *Self, mode: ALU_CONTROL) void {
         self.mode = mode;
     }
 
-    pub fn calculate(self: *Self, a: i32, b: i32) i32 {
+    pub fn calculate(self: *Self, a: i32, b: i32) void {
+        var res: i32 = 0;
         switch (self.mode) {
-            ALU_MODE.ADD => {
-                return a + b;
+            ALU_CONTROL.ADD => {
+                res = a + b;
             },
-            ALU_MODE.SUBTRACT => {
-                return a - b;
+            ALU_CONTROL.SUBTRACT => {
+                res = a - b;
             },
-            ALU_MODE.AND => {
-                return a & b;
+            ALU_CONTROL.AND => {
+                res = a & b;
             },
-            ALU_MODE.OR => {
-                return a | b;
+            ALU_CONTROL.OR => {
+                res = a | b;
             },
-            ALU_MODE.SET_LESS_THAN => {
-                return @intFromBool(a < b);
+            ALU_CONTROL.SET_LESS_THAN => {
+                res = @intFromBool(a < b);
             },
         }
+        self.zero = res == 0;
+        self.result = res;
     }
 };
 
 test ALU {
     var alu = ALU{};
-    alu.setMode(ALU.ALU_MODE.ADD);
-    try expect(alu.calculate(1, 3) == 4);
-    alu.setMode(ALU.ALU_MODE.SUBTRACT);
-    try expect(alu.calculate(4, 1) == 3);
-    alu.setMode(ALU.ALU_MODE.AND);
-    try expect(alu.calculate(3, 2) == 2);
-    alu.setMode(ALU.ALU_MODE.OR);
-    try expect(alu.calculate(4, 5) == 5);
-    alu.setMode(ALU.ALU_MODE.SET_LESS_THAN);
-    try expect(alu.calculate(3, 9) == 1);
+    alu.setMode(ALU_CONTROL.ADD);
+    alu.calculate(1, 3);
+    try expect(alu.result == 4);
+    alu.setMode(ALU_CONTROL.SUBTRACT);
+    alu.calculate(4, 1);
+    try expect(alu.result == 3);
+    alu.setMode(ALU_CONTROL.AND);
+    alu.calculate(3, 2);
+    try expect(alu.result == 2);
+    alu.setMode(ALU_CONTROL.OR);
+    alu.calculate(4, 5);
+    try expect(alu.result == 5);
+    alu.setMode(ALU_CONTROL.SET_LESS_THAN);
+    alu.calculate(3, 9);
+    try expect(alu.result == 1);
 }
 
 pub const Model = struct {
@@ -236,6 +278,7 @@ pub const Model = struct {
     data_memory: *Memory,
     register_file: RegisterFile,
     control_unit: *ControlUnit,
+    alu: ALU,
     pc: u32,
 
     pub fn init(allocator: std.mem.Allocator, mem_size: u32, instruction_memory: *Memory) !*Self {
@@ -245,6 +288,7 @@ pub const Model = struct {
         self.data_memory = try Memory.init(allocator, mem_size);
         self.register_file = try RegisterFile.init(allocator);
         self.control_unit = try ControlUnit.init(allocator);
+        self.alu = ALU{};
         self.pc = 0x0;
         return self;
     }
@@ -268,8 +312,6 @@ pub const Model = struct {
         const a1: u32 = (instr >> 15) & 0b11111;
         const a2: u32 = (instr >> 20) & 0b11111;
         const a3: u32 = (instr >> 7) & 0b11111;
-        _ = funct3;
-        _ = funct7;
 
         const rs1 = self.register_file.read(@truncate(a2));
         const rs2 = self.register_file.read(@truncate(a1));
@@ -278,8 +320,11 @@ pub const Model = struct {
         _ = rs2;
         _ = rd;
 
-        const control_signals: ControlSignals = try self.control_unit.decode(op);
+        const control_signals: ControlSignals = try self.control_unit.decodeMain(op);
         std.debug.print("Control Signals: {any}\n", .{control_signals});
+        const alu_control: ALU_CONTROL = self.control_unit.decodeALU(funct3, funct7);
+        std.debug.print("ALUControl: {any}\n", .{alu_control});
+
         self.pc += 4;
     }
 };
@@ -289,6 +334,8 @@ test Model {
     const instruction_memory = try Memory.init(allocator, 1024);
     const model = try Model.init(allocator, 1024, instruction_memory);
     defer model.deinit();
+
+    try instruction_memory.writeWord(0x00, 0b0000000001001_00000_110_00101_0010011); // ori t0, x0, 9
 
     model.tick() catch |err| {
         std.debug.print("UNEXPECTED ERROR OCCURED: {}\n", .{err});
