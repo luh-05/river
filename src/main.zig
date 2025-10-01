@@ -196,14 +196,16 @@ pub const ControlUnit = struct {
     }
 
     // Decodes ALU, returns ADD for illegal codes
-    pub fn decodeALU(self: *Self, funct3: u32, funct7: u32) ALU_CONTROL {
+    pub fn decodeALU(self: *Self, funct3: u32, funct7: u32, op: u32) ALU_CONTROL {
         switch (self.control_signals.alu_op) {
             0b00 => return ALU_CONTROL.ADD,
             0b01 => return ALU_CONTROL.SUBTRACT,
             0b10 => {
                 switch (funct3) {
                     0b000 => {
-                        switch (funct7) {
+                        const t = ((funct7 | op) >> 4) & 0b11;
+                        // std.debug.print("{0b:0>2}\n", .{t});
+                        switch (t) {
                             0b00, 0b01, 0b10 => return ALU_CONTROL.ADD,
                             0b11 => return ALU_CONTROL.SUBTRACT,
                             else => return ALU_CONTROL.ADD,
@@ -353,22 +355,21 @@ pub const Model = struct {
 
     pub fn tick(self: *Self) !void {
         const instr = try self.instruction_memory.readWord(self.pc);
-        std.debug.print("Current Instruction 0x{1x:0>8}: 0b{0b:0>32}\n", .{ try self.instruction_memory.readWord(self.pc), self.pc });
         const op: u32 = instr & 0b1111111;
         const funct3: u32 = (instr >> 12) & 0b111;
         const funct7: u32 = (instr >> 25) & 0b1111111;
         const a1: u32 = (instr >> 15) & 0b11111;
         const a2: u32 = (instr >> 20) & 0b11111;
-        const a3: u32 = (instr >> 7) & 0b11111;
+        const a3: u8 = @truncate((instr >> 7) & 0b11111);
+        std.debug.print("Current Instruction 0x{1x:0>8}: 0b{0b:0>32} (op: 0b{2b:0>7}, funct3: 0b{3b:0>3}, funct7: 0b{4b:0>7}, a1: 0b{5b:0>5}, a2: 0b{6b:0>5}, a3: 0b{7b:0>5})\n", .{ try self.instruction_memory.readWord(self.pc), self.pc, op, funct3, funct7, a1, a2, a3 });
 
-        const rs1: i32 = self.register_file.read(@truncate(a2));
-        const rs2: i32 = self.register_file.read(@truncate(a1));
-        const rd = self.register_file.read(@truncate(a3));
-        _ = rd;
+        const rs1: i32 = self.register_file.read(@truncate(a1));
+        const rs2: i32 = self.register_file.read(@truncate(a2));
+        // const rd = self.register_file.read(@truncate(a3));
 
         const control_signals: ControlSignals = try self.control_unit.decodeMain(op);
         std.debug.print("Control Signals: {any}\n", .{control_signals});
-        const alu_control: ALU_CONTROL = self.control_unit.decodeALU(funct3, funct7);
+        const alu_control: ALU_CONTROL = self.control_unit.decodeALU(funct3, funct7, op);
         // std.debug.print("ALUControl: {any}\n", .{alu_control});
 
         self.alu.setMode(alu_control);
@@ -380,7 +381,12 @@ pub const Model = struct {
         };
         self.alu.calculate(src_a, src_b);
         const alu_res = self.alu.getResult();
-        std.debug.print("Alu operation ({any}): [{d}, {d}] = {d}\n", .{ alu_control, src_a, src_b, alu_res });
+        std.debug.print("ALU operation ({any}): [{d}, {d}] = {d}\n", .{ alu_control, src_a, src_b, alu_res });
+
+        if (@bitCast(control_signals.reg_write)) {
+            self.register_file.write(a3, alu_res);
+            std.debug.print("Saved {d} to register x{:0>1}\n", .{ self.register_file.read(a3), a3 });
+        }
 
         if (@bitCast(control_signals.mem_write)) {
             // self.data_memory.writeWord(, value: u32)
@@ -396,8 +402,16 @@ test Model {
     const model = try Model.init(allocator, 1024, instruction_memory);
     defer model.deinit();
 
-    try instruction_memory.writeWord(0x00, 0b0000000001001_00000_110_00101_0010011); // ori t0, x0, 9
+    try instruction_memory.writeWord(0x00, 0b000000001011_00000_110_00101_0010011); // ori t0, x0, 11
+    try instruction_memory.writeWord(0x04, 0b000000000001_00000_000_00110_0010011); // addi t1, x0, 1
+    try instruction_memory.writeWord(0x08, 0b0100000_00110_00101_000_00101_0110011); // sub t0, t0, t1
 
+    model.tick() catch |err| {
+        std.debug.print("UNEXPECTED ERROR OCCURED: {}\n", .{err});
+    };
+    model.tick() catch |err| {
+        std.debug.print("UNEXPECTED ERROR OCCURED: {}\n", .{err});
+    };
     model.tick() catch |err| {
         std.debug.print("UNEXPECTED ERROR OCCURED: {}\n", .{err});
     };
