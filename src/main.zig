@@ -363,20 +363,18 @@ pub const Model = struct {
         const a3: u8 = @truncate((instr >> 7) & 0b11111);
         std.debug.print("Current Instruction 0x{1x:0>8}: 0b{0b:0>32} (op: 0b{2b:0>7}, funct3: 0b{3b:0>3}, funct7: 0b{4b:0>7}, a1: 0b{5b:0>5}, a2: 0b{6b:0>5}, a3: 0b{7b:0>5})\n", .{ try self.instruction_memory.readWord(self.pc), self.pc, op, funct3, funct7, a1, a2, a3 });
 
-        const rs1: i32 = self.register_file.read(@truncate(a1));
-        const rs2: i32 = self.register_file.read(@truncate(a2));
-        // const rd = self.register_file.read(@truncate(a3));
+        const rd1: i32 = self.register_file.read(@truncate(a1));
+        const rd2: i32 = self.register_file.read(@truncate(a2));
 
         const control_signals: ControlSignals = try self.control_unit.decodeMain(op);
         std.debug.print("Control Signals: {any}\n", .{control_signals});
         const alu_control: ALU_CONTROL = self.control_unit.decodeALU(funct3, funct7, op);
-        // std.debug.print("ALUControl: {any}\n", .{alu_control});
 
         self.alu.setMode(alu_control);
-        const src_a = rs1;
+        const src_a = rd1;
         self.extend.src = control_signals.imm_src;
         const src_b = switch (control_signals.alu_src) {
-            0b0 => rs2,
+            0b0 => rd2,
             0b1 => self.extend.extend(instr),
         };
         self.alu.calculate(src_a, src_b);
