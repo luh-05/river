@@ -90,10 +90,16 @@ pub const RegisterFile = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator) !Self {
-        return Self{
+        const temp = Self{
             .allocator = allocator,
             .registers = try allocator.alloc(i32, 31),
         };
+
+        for (temp.registers) |*v| {
+            v.* = 0;
+        }
+
+        return temp;
     }
 
     pub fn deinit(self: *Self) void {
@@ -250,6 +256,14 @@ pub const ALU = struct {
         self.zero = res == 0;
         self.result = res;
     }
+
+    pub fn getResult(self: *Self) i32 {
+        return self.result;
+    }
+
+    pub fn getZero(self: *Self) bool {
+        return self.zero;
+    }
 };
 
 test ALU {
@@ -271,6 +285,38 @@ test ALU {
     try expect(alu.result == 1);
 }
 
+pub const Extend = struct {
+    const Self = @This();
+    src: u2,
+
+    pub fn extend(self: *Self, instr: u32) i32 {
+        var temp: u32 = 0;
+        switch (self.src) {
+            // I-Type
+            0b00 => {
+                temp |= (instr >> 20) & 0b111111111111;
+            },
+            0b01 => {
+                temp |= (instr >> 7) & 0b11111;
+                temp |= ((instr >> 25) & 0b1111111) << 5;
+            },
+            0b10 => {
+                temp |= ((instr >> 8) & 0b1111) << 1;
+                temp |= ((instr >> 25) & 0b111111) << 5;
+                temp |= ((instr >> 7) & 0b1) << 11;
+                temp |= ((instr >> 31) & 0b1) << 12;
+            },
+            0b11 => {
+                temp |= ((instr >> 21) & 0b1111111111) << 1;
+                temp |= ((instr >> 20) & 0b1) << 11;
+                temp |= ((instr >> 12) & 0b11111111) << 12;
+                temp |= ((instr >> 31) & 0b1) << 20;
+            },
+        }
+        return @bitCast(temp);
+    }
+};
+
 pub const Model = struct {
     const Self = @This();
     allocator: std.mem.Allocator,
@@ -279,6 +325,7 @@ pub const Model = struct {
     register_file: RegisterFile,
     control_unit: *ControlUnit,
     alu: ALU,
+    extend: Extend,
     pc: u32,
 
     pub fn init(allocator: std.mem.Allocator, mem_size: u32, instruction_memory: *Memory) !*Self {
@@ -289,6 +336,7 @@ pub const Model = struct {
         self.register_file = try RegisterFile.init(allocator);
         self.control_unit = try ControlUnit.init(allocator);
         self.alu = ALU{};
+        self.extend = Extend{ .src = 0 };
         self.pc = 0x0;
         return self;
     }
@@ -313,17 +361,30 @@ pub const Model = struct {
         const a2: u32 = (instr >> 20) & 0b11111;
         const a3: u32 = (instr >> 7) & 0b11111;
 
-        const rs1 = self.register_file.read(@truncate(a2));
-        const rs2 = self.register_file.read(@truncate(a1));
+        const rs1: i32 = self.register_file.read(@truncate(a2));
+        const rs2: i32 = self.register_file.read(@truncate(a1));
         const rd = self.register_file.read(@truncate(a3));
-        _ = rs1;
-        _ = rs2;
         _ = rd;
 
         const control_signals: ControlSignals = try self.control_unit.decodeMain(op);
         std.debug.print("Control Signals: {any}\n", .{control_signals});
         const alu_control: ALU_CONTROL = self.control_unit.decodeALU(funct3, funct7);
-        std.debug.print("ALUControl: {any}\n", .{alu_control});
+        // std.debug.print("ALUControl: {any}\n", .{alu_control});
+
+        self.alu.setMode(alu_control);
+        const src_a = rs1;
+        self.extend.src = control_signals.imm_src;
+        const src_b = switch (control_signals.alu_src) {
+            0b0 => rs2,
+            0b1 => self.extend.extend(instr),
+        };
+        self.alu.calculate(src_a, src_b);
+        const alu_res = self.alu.getResult();
+        std.debug.print("Alu operation ({any}): [{d}, {d}] = {d}\n", .{ alu_control, src_a, src_b, alu_res });
+
+        if (@bitCast(control_signals.mem_write)) {
+            // self.data_memory.writeWord(, value: u32)
+        }
 
         self.pc += 4;
     }
