@@ -1,5 +1,5 @@
 {
-  description = "RIvEr Sandbox";
+  description = "river Sandbox";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -27,7 +27,7 @@
           inherit nativeBuildInputs;
           shellHook = ''
             alias la="eza -lA"
-            echo "RIvEr dev shell ready."
+            echo "river dev shell ready."
           '';
         };
       }

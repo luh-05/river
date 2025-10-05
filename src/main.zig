@@ -144,11 +144,11 @@ pub const ControlUnit = struct {
         const file_stat = try input_file.stat();
         // defer self.allocator.destroy(file_stat);
 
-        const input = try input_file.readToEndAllocOptions(self.allocator, file_stat.size, null, @sizeOf(u8), 0);
+        const input = try input_file.readToEndAllocOptions(self.allocator, file_stat.size, null, std.mem.Alignment.@"8", 0);
         std.debug.print("input size: {d}\ninput: {s}\n", .{ input.len, input });
         defer self.allocator.free(input);
 
-        var status: std.zon.parse.Status = .{};
+        var status: std.zon.parse.Diagnostics = .{};
         defer status.deinit(self.allocator);
         const parsed = try std.zon.parse.fromSlice(struct { instructions: []struct {
             op: u32,
